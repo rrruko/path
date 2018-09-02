@@ -1,0 +1,9 @@
+[package]
+name = "path"
+version = "0.1.0"
+authors = ["ruko <rukokarasu@gmail.com>"]
+
+[dependencies]
+bvh = "0.2.3"
+nalgebra = "0.16"
+png = "0.12.0"
