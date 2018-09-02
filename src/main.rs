@@ -33,13 +33,15 @@ fn main() {
 }
 
 fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
-    let sphere_1 = Sphere {
-        center: Point3::new(0.0, 0.0, 1.0),
-        radius: 1.0,
-    };
+    let sphere_1 = Sphere::new(
+        Point3::new(0.0, 0.0, 0.0),
+        2.0,
+    );
 
-    let camera = Point3::new(0.0, 0.0, -1.0);
-    
+    let camera = Point3::new(0.0, 0.0, -5.0);
+
+    let light = Vector3::new(-0.5, 1.0, -1.0).normalize();
+
     let wf = width as f32;
     let hf = height as f32;
 
@@ -47,24 +49,44 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
         let offset = 4 * i;
         let x = i % width;
         let y = i / width;
-        let x_ratio = (x as f32 - (wf / 2.0)) / wf;
-        let y_ratio = (y as f32 - (hf / 2.0)) / hf;
-        let ray_dir = Vector3::new(x_ratio, y_ratio, 0.5);
-        let ray = Ray::new(camera, ray_dir);
-        let hit = intersect(&ray, &sphere_1);
-        let (r, g, b) = 
-            match hit {
-                Some(idata) => {
-                    let u_tex = 255 * ((idata.uv.x * 100.0).floor() as u8 % 2);
-                    let v_tex = 255 * ((idata.uv.y * 100.0).floor() as u8 % 2);
-                    (u_tex ^ v_tex, u_tex ^ v_tex, u_tex ^ v_tex)
-                },
-                None => (0, 0, 0),
-            };
-        out_vec[offset]   = r as u8;
-        out_vec[offset+1] = g as u8;
-        out_vec[offset+2] = b as u8;
-        out_vec[offset+3] = 255;
+
+        for bounce in 0..1 {
+            let mut r = 0.0;
+            let mut g = 0.0;
+            let mut b = 0.0;
+            // Repeat 16 times with slight offset for supersampling.
+            for ss in 0..16 {
+                let xoffs = 0.25 * (ss % 4) as f32;
+                let yoffs = 0.25 * (ss / 4) as f32;
+                let x_ratio = (x as f32 + xoffs - (wf / 2.0)) / wf;
+                let y_ratio = (y as f32 + yoffs - (hf / 2.0)) / hf;
+                let ray_dir = Vector3::new(x_ratio, y_ratio, 1.0);
+                let ray = Ray::new(camera, ray_dir);
+                let hit = intersect(&ray, &sphere_1);
+                let (rr, gg, bb) =
+                    match hit {
+                        Some(idata) => {
+                            let litness = idata.normal.dot(&light);
+                            let u_tex = (idata.uv.x * 100.0).floor() as u8 % 2;
+                            let v_tex = (idata.uv.y * 100.0).floor() as u8 % 2;
+                            let mut color = 255.0 * litness * (u_tex ^ v_tex) as f32;
+                            if color < 0.0 {
+                                color = 0.0;
+                            }
+                            (color, color, color)
+                        },
+                        None => (0.0, 0.0, 0.0),
+                    };
+                r += rr;
+                g += gg;
+                b += bb;
+            }
+            let (r, g, b) = (r / 16.0, g / 16.0, b / 16.0);
+            out_vec[offset]   = r as u8;
+            out_vec[offset+1] = g as u8;
+            out_vec[offset+2] = b as u8;
+            out_vec[offset+3] = 255;
+        }
     }
 }
 
@@ -77,13 +99,24 @@ struct IntersectData {
 struct Sphere {
     center: Point3<f32>,
     radius: f32,
+    radius2: f32,
+}
+
+impl Sphere {
+    fn new(center: Point3<f32>, radius: f32) -> Self {
+        Sphere {
+            center: center,
+            radius: radius,
+            radius2: radius * radius
+        }
+    }
 }
 
 fn intersect(ray: &Ray, sphere: &Sphere) -> Option<IntersectData> {
     let mut t0;
     let mut t1;
     let dir = ray.direction;
-    let radius2 = sphere.radius * sphere.radius;
+    let radius2 = sphere.radius2;
     let l = sphere.center - ray.origin;
     let tca = l.dot(&dir);
     let d2 = l.dot(&l) - tca * tca;
@@ -91,22 +124,24 @@ fn intersect(ray: &Ray, sphere: &Sphere) -> Option<IntersectData> {
     let thc = (radius2 - d2).sqrt();
     t0 = tca - thc;
     t1 = tca + thc;
-    
+
     if t0 > t1 { ::std::mem::swap(&mut t0, &mut t1); };
-    
+
     if t0 < 0.0 {
         t0 = t1;
         if t0 < 0.0 { return None; };
     }
     let t = t0;
     let phit = ray.origin + t * ray.direction;
-    
+    let normal = phit - sphere.center;
+
     // compute uv
-    let u = (phit - sphere.center).y.atan2((phit - sphere.center).x);
-    let v = ((phit - sphere.center).z / sphere.radius).acos();
+    let u = normal.z.atan2(normal.x);
+    let v = (normal.y / sphere.radius).acos();
+
     Some(IntersectData {
         point: phit,
-        normal: (phit - sphere.center).normalize(),
+        normal: normal.normalize(),
         uv: Point2::new(u / TWO_PI, v / TWO_PI),
     })
 }
