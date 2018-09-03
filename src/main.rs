@@ -1,6 +1,7 @@
 extern crate bvh;
 extern crate nalgebra;
 extern crate png;
+extern crate rand;
 
 use std::path::Path;
 use std::fs::File;
@@ -18,8 +19,8 @@ fn main() {
     let file = File::create(path).unwrap();
     let w = &mut BufWriter::new(file);
 
-    let width = 1024;
-    let height = 1024;
+    let width = 512;
+    let height = 512;
 
     let mut encoder = png::Encoder::new(w, width as u32, height as u32);
 
@@ -40,7 +41,10 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
 
     let camera = Point3::new(0.0, 0.0, -5.0);
 
-    let light = Vector3::new(-0.5, 1.0, -1.0).normalize();
+    let light = Sphere::new(
+        Point3::new(0.0, 2.0, -5.0),
+        1.0,
+    );
 
     let wf = width as f32;
     let hf = height as f32;
@@ -50,50 +54,110 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
         let x = i % width;
         let y = i / width;
 
-        for bounce in 0..1 {
-            let mut r = 0.0;
-            let mut g = 0.0;
-            let mut b = 0.0;
-            // Repeat 16 times with slight offset for supersampling.
-            for ss in 0..16 {
-                let xoffs = 0.25 * (ss % 4) as f32;
-                let yoffs = 0.25 * (ss / 4) as f32;
-                let x_ratio = (x as f32 + xoffs - (wf / 2.0)) / wf;
-                let y_ratio = (y as f32 + yoffs - (hf / 2.0)) / hf;
-                let ray_dir = Vector3::new(x_ratio, y_ratio, 1.0);
-                let ray = Ray::new(camera, ray_dir);
-                let hit = intersect(&ray, &sphere_1);
-                let (rr, gg, bb) =
-                    match hit {
-                        Some(idata) => {
-                            let litness = idata.normal.dot(&light);
-                            let u_tex = (idata.uv.x * 100.0).floor() as u8 % 2;
-                            let v_tex = (idata.uv.y * 100.0).floor() as u8 % 2;
-                            let mut color = 255.0 * litness * (u_tex ^ v_tex) as f32;
-                            if color < 0.0 {
-                                color = 0.0;
-                            }
-                            (color, color, color)
-                        },
-                        None => (0.0, 0.0, 0.0),
-                    };
-                r += rr;
-                g += gg;
-                b += bb;
+        let mut r = 0.0;
+        let mut g = 0.0;
+        let mut b = 0.0;
+
+        // Repeat 400 times for 400 samples.
+        // Each sample is offset slightly for supersampling.
+        for ss in 0..400 {
+            let xoffs = 0.0025 * (ss % 20) as f32;
+            let yoffs = 0.0025 * (ss / 20) as f32;
+            let x_ratio = (x as f32 + xoffs - (wf / 2.0)) / wf;
+            let y_ratio = (y as f32 + yoffs - (hf / 2.0)) / hf;
+            let ray_dir = Vector3::new(x_ratio, y_ratio, 1.0);
+            let ray = Ray::new(camera, ray_dir);
+            let (rr, gg, bb) = trace_iterative(ray, &sphere_1, &light);
+            r += rr;
+            g += gg;
+            b += bb;
+        }
+        let (r, g, b) = (r / 400.0, g / 400.0, b / 400.0);
+        out_vec[offset]   = (r * 255.0) as u8;
+        out_vec[offset+1] = (g * 255.0) as u8;
+        out_vec[offset+2] = (b * 255.0) as u8;
+        out_vec[offset+3] = 255;
+    }
+}
+
+// c ranges from 0 to 1, output should range from 
+fn scale_color(c: f32) -> f32 {
+   (c * 100.0 + 1.0).log10() * 127.0
+}
+
+fn trace_iterative(ray: Ray, sphere: &Sphere, light: &Sphere) -> (f32, f32, f32) {
+
+    let mut ray = ray;
+
+    let mut frag_color = (1.0, 1.0, 1.0);
+
+    for i in 0..2 {
+        let hit = intersect(&ray, &sphere);
+        let hit_light = intersect(&ray, &light);
+
+        if let Some(idata) = hit_light {
+            // We're done, return the light color
+            return (
+                frag_color.0 * 10.0,
+                frag_color.1 * 10.0,
+                frag_color.2 * 10.0);
+        } else if let Some(idata) = hit {
+            // Multiply by the surface color and bounce
+
+            // Compute the surface color
+            let u_tex = (idata.uv.x * 10.0).floor() as u8 % 2;
+            let v_tex = (idata.uv.y * 10.0).floor() as u8 % 2;
+            let mut color = (u_tex ^ v_tex) as f32;
+            if color < 0.0 {
+                color = 0.0;
             }
-            let (r, g, b) = (r / 16.0, g / 16.0, b / 16.0);
-            out_vec[offset]   = r as u8;
-            out_vec[offset+1] = g as u8;
-            out_vec[offset+2] = b as u8;
-            out_vec[offset+3] = 255;
+            
+            // Compute the bounced ray
+            ray = Ray::new(
+                idata.point + 0.00001 * idata.normal, 
+                random_vector_in_hemisphere(&idata.normal)
+            );
+
+            // Multiply
+            frag_color = 
+                (frag_color.0 * color,
+                 frag_color.1 * color,
+                 frag_color.2 * color);
+        } else {
+            // Light escaped into oblivion, give up
+            break;
         }
     }
+
+    return (
+        frag_color.0 * 0.0, 
+        frag_color.1 * 0.0, 
+        frag_color.2 * 0.0);
+}
+
+fn random_vector_in_hemisphere(vec: &Vector3<f32>) -> Vector3<f32> {
+    let u  = rand::random::<f32>();
+    let v  = rand::random::<f32>();
+    let th = TWO_PI * u;
+    let ph = (2.0 * v - 1.0).acos();
+
+    let mut new_vec = Vector3::new(
+        th.cos() * ph.sin(),
+        th.sin() * ph.sin(),
+        ph.cos()
+    );
+
+    if new_vec.dot(vec) < 0.0 {
+        new_vec *= -1.0;
+    }
+    new_vec
 }
 
 struct IntersectData {
     point: Point3<f32>,
     normal: Vector3<f32>,
     uv: Point2<f32>,
+    dist: f32,
 }
 
 struct Sphere {
@@ -143,5 +207,6 @@ fn intersect(ray: &Ray, sphere: &Sphere) -> Option<IntersectData> {
         point: phit,
         normal: normal.normalize(),
         uv: Point2::new(u / TWO_PI, v / TWO_PI),
+        dist: t,
     })
 }
