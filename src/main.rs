@@ -13,12 +13,14 @@ use png::HasParameters;
 use nalgebra::{Vector3};
 use bvh::nalgebra::{Point2, Point3};
 use bvh::ray::Ray;
+use std::f32::INFINITY;
+use std::f32::consts::FRAC_PI_2;
 use std::f64::consts::PI;
 use alga::linear::EuclideanSpace;
 
 const TWO_PI: f32 = 2.0 * PI as f32;
 
-const SAMPLE_COUNT_SQRT: i32 = 50;
+const SAMPLE_COUNT_SQRT: i32 = 100;
 const SAMPLE_COUNT: i32 = SAMPLE_COUNT_SQRT * SAMPLE_COUNT_SQRT;
 const INV_SAMPLE_COUNT: f32 = 1.0 / (SAMPLE_COUNT as f32);
 
@@ -113,7 +115,7 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
     );
 
     let mut back_light_1 = Disc::new(
-        back.clone(),
+        back,
         1_f32,
     );
     back_light_1.plane.center.y -= 20.0;
@@ -122,7 +124,7 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
     back_light_1.plane.material = Material::Light(100.0);
 
     let mut back_light_2 = Disc::new(
-        back.clone(),
+        back,
         1_f32,
     );
     back_light_2.plane.center.y -= 10.0;
@@ -131,7 +133,7 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
     back_light_2.plane.material = Material::Light(100.0);
     
     let mut back_light_3 = Disc::new(
-        back.clone(),
+        back,
         1_f32,
     );
     back_light_3.plane.center.y -= 10.0;
@@ -140,7 +142,7 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
     back_light_3.plane.material = Material::Light(100.0);
     
     let mut back_light_4 = Disc::new(
-        back.clone(),
+        back,
         1_f32,
     );
     back_light_4.plane.center.y -= 20.0;
@@ -148,7 +150,7 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
     back_light_4.plane.center.z -= 0.01;
     back_light_4.plane.material = Material::Light(100.0);
 
-    let mut is: Vec<&Intersectable> = vec![
+    let is: Vec<&Intersectable> = vec![
         &sphere, &sphere_2, &sphere_3, &sphere_4,
         &light_left,
         &back_light_1, &back_light_2, &back_light_3, &back_light_4,
@@ -177,6 +179,8 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
             let x_ratio = (x as f32 + xoffs - (wf / 2.0)) * 7.0 / wf;
             let y_ratio = (y as f32 + yoffs - (hf / 2.0)) * 7.0 / hf;
             let mut ray_dir_from_camera = Point3::new(x_ratio, y_ratio, 7.0);
+
+            // Square bokeh. Maybe try a ring shape?
             let camera_xoffs = rand::random::<f32>() * 0.5 - 0.25;
             let camera_yoffs = rand::random::<f32>() * 0.5 - 0.25;
             let aperture_sample_point = Point3::new(
@@ -189,11 +193,6 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
                 ray_dir_from_camera.y - camera_yoffs,
                 ray_dir_from_camera.z
             );
-                /*
-                camera.x + (ray_target.x + camera.x - aperture_sample_point.x),
-                camera.y + (ray_target.y + camera.y - aperture_sample_point.y),
-                camera.z + (ray_target.z + camera.z - aperture_sample_point.z)
-                */
             let ray = Ray::new(aperture_sample_point, ray_dir);
             let (rr, gg, bb) = trace_iterative(ray, &is);
             r += rr;
@@ -201,22 +200,15 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
             b += bb;
         }
         let (r, g, b) = (r * INV_SAMPLE_COUNT, g * INV_SAMPLE_COUNT, b * INV_SAMPLE_COUNT);
-        out_vec[offset]   = oof(r) as u8;//(r * 255.0).min(255.0) as u8;
-        out_vec[offset+1] = oof(g) as u8;//(g * 255.0).min(255.0) as u8;
-        out_vec[offset+2] = oof(b) as u8;//(b * 255.0).min(255.0) as u8;
+        out_vec[offset]   = scale_radiance(r) as u8;
+        out_vec[offset+1] = scale_radiance(g) as u8;
+        out_vec[offset+2] = scale_radiance(b) as u8;
         out_vec[offset+3] = 255;
     }
 }
 
-fn oof(x: f32) -> f32 {
-    (x * 25.0).min(255.0)
-    /*
-    let max_lightness = 100.0_f32;
-    let scale = 10.0_f32;
-    let counter = (max_lightness * scale + 1.0).log10();
-    let exposure = 1.0_f32;
-    (x * scale + 1.0).log10() * 255.0 * exposure / counter
-    */
+fn scale_radiance(x: f32) -> f32 {
+    255.0 * (x/4.0).atan() / FRAC_PI_2
 }
 
 fn random_vector_in_hemisphere(vec: &Vector3<f32>) -> Vector3<f32> {
@@ -275,30 +267,6 @@ fn trace_iterative(ray: Ray, thing: &Intersectable) -> (f32, f32, f32) {
                         mirror(&idata.incident, &idata.normal),
                     );
                 },
-                Material::Diffuse => {
-                    ray = Ray::new(
-                        idata.point + 0.00001 * idata.normal,
-                        random_vector_in_hemisphere(&idata.normal)
-                    );
-
-                    let u_tex = (idata.uv.x * 3.0).floor() as u8 % 2;
-                    let v_tex = (idata.uv.y * 3.0).floor() as u8 % 2;
-                    let mut color = f32::from(u_tex ^ v_tex);
-                    color += 1.0;
-                    color *= 0.5;
-
-                    let u_tex_2 = (idata.uv.x * 0.25).floor() as u8 % 2;
-                    let v_tex_2 = (idata.uv.y * 0.25).floor() as u8 % 2;
-                    let mut color_2 = f32::from(u_tex_2 ^ v_tex_2);
-                    color_2 += 1.0;
-                    color_2 *= 0.25;
-
-                    frag_color = (
-                        frag_color.0 * color * color_2,
-                        frag_color.1 * color * color_2,
-                        frag_color.2 * color * color_2
-                    );
-                },
                 Material::Candy(r, g, b) => {
                     let will_reflect = rand::random::<f32>();
                     if will_reflect > 0.05 {
@@ -334,7 +302,6 @@ fn trace_iterative(ray: Ray, thing: &Intersectable) -> (f32, f32, f32) {
 enum Material {
     Mirror,
     Light(f32),
-    Diffuse,
     Candy(f32, f32, f32)
 }
 
@@ -460,7 +427,7 @@ impl Intersectable for Disc {
 
 impl<'a> Intersectable for Vec<&'a dyn Intersectable> {
     fn intersect(&self, ray: &Ray) -> Option<IntersectData> {
-        let mut nearest_dist = ::std::f32::INFINITY;
+        let mut nearest_dist = INFINITY;
         let mut nearest_hit = None;
         for intersectable in self {
             let hit = intersectable.intersect(ray);
@@ -484,7 +451,7 @@ mod tests {
         let plane = Plane {
             center: Point3::new(0.0, 0.0, 0.0),
             normal: Vector3::new(0.0, 1.0, 0.0),
-            material: Material::Light,
+            material: Material::Mirror,
         };
         let ray = Ray::new(
             Point3::new(0.0, 2.0, 0.0),
