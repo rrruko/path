@@ -6,6 +6,7 @@ extern crate nalgebra;
 extern crate png;
 extern crate rand;
 
+use std::ops;
 use std::path::Path;
 use std::fs::File;
 use std::io::BufWriter;
@@ -20,7 +21,7 @@ use alga::linear::EuclideanSpace;
 
 const TWO_PI: f32 = 2.0 * PI as f32;
 
-const SAMPLE_COUNT_SQRT: i32 = 100;
+const SAMPLE_COUNT_SQRT: i32 = 5;
 const SAMPLE_COUNT: i32 = SAMPLE_COUNT_SQRT * SAMPLE_COUNT_SQRT;
 const INV_SAMPLE_COUNT: f32 = 1.0 / (SAMPLE_COUNT as f32);
 
@@ -34,7 +35,7 @@ fn main() {
 
 fn write_image(pixel_buffer: &[u8], width: u32, height: u32, path: &str) {
     assert_eq!(pixel_buffer.len() as u32, width * height * 4);
-    
+
     let path = Path::new(path);
     let file = File::create(path).unwrap();
     let w = &mut BufWriter::new(file);
@@ -46,72 +47,81 @@ fn write_image(pixel_buffer: &[u8], width: u32, height: u32, path: &str) {
 
 #[allow(many_single_char_names)]
 fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
+    let mirror = Material::Mirror(Color::new(0.9, 0.9, 0.9));
+    let red = Material::Candy(Color::new(0.9, 0.2, 0.3));
+    let blue = Material::Candy(Color::new(0.2, 0.3, 0.9));
+    let bright_light = Material::Light(Color::new(500.0, 500.0, 500.0));
+    let dim_light = Material::Light(Color::new(10.0, 10.0, 10.0));
+    let white = Material::Candy(Color::new(0.95, 0.95, 0.95));
+
     let sphere = Sphere::new(
         Point3::new(0.0, 0.0, 4.0),
         2.0,
-        Material::Mirror,
+        mirror,
     );
 
     let sphere_2 = Sphere::new(
         Point3::new(0.0, 0.0, -8.0),
         2.0,
-        Material::Mirror,
+        mirror,
     );
 
     let sphere_3 = Sphere::new(
         Point3::new(-1.8, 1.0, 1.0),
         1.0,
-        Material::Candy(0.9, 0.2, 0.3),
+        red,
     );
 
     let sphere_4 = Sphere::new(
         Point3::new(1.8, 1.0, -2.0),
         1.0,
-        Material::Candy(0.2, 0.3, 0.9),
+        blue,
     );
 
     let camera = Point3::new(0.0, 0.0, -5.0);
+    let focal_distance = 7.0; // Focus is on the plane 7 units in front of the camera.
+    let aperture_width = 0.5;
 
     let light_left = Sphere::new(
         Point3::new(-20.0, -10.0, 0.0),
         1.0,
-        Material::Light(500.0),
+        bright_light,
     );
 
     let plane = Plane::new(
         Point3::new(0.0, 2.0, 0.0),
         Vector3::new(0.0, -1.0, 0.0),
-        Material::Candy(0.95, 0.95, 0.95),
+        white,
     );
 
     let sky = Plane::new(
         Point3::new(0.0, -50.0, 0.0),
         Vector3::new(0.0, 1.0, 0.0),
-        Material::Candy(0.95, 0.95, 0.95),
+        white,
     );
 
     let back = Plane::new(
         Point3::new(0.0, 0.0, 50.0),
         Vector3::new(0.0, 0.0, -1.0),
-        Material::Candy(0.95, 0.95, 0.95),
+        white,
     );
 
     let front = Plane::new(
         Point3::new(0.0, 0.0, -50.0),
         Vector3::new(0.0, 0.0, 1.0),
-        Material::Candy(0.95, 0.95, 0.95),
+        white,
     );
 
     let left = Plane::new(
         Point3::new(-50.0, 0.0, 0.0),
         Vector3::new(1.0, 0.0, 0.0),
-        Material::Light(10.0),
+        dim_light,
     );
 
     let right = Plane::new(
         Point3::new(50.0, 0.0, 0.0),
         Vector3::new(-1.0, 0.0, 0.0),
-        Material::Candy(0.95, 0.95, 0.95),
+        white,
     );
 
     let mut back_light_1 = Disc::new(
@@ -121,7 +131,7 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
     back_light_1.plane.center.y -= 20.0;
     back_light_1.plane.center.x -= 5.0;
     back_light_1.plane.center.z -= 0.01;
-    back_light_1.plane.material = Material::Light(100.0);
+    back_light_1.plane.material = bright_light;
 
     let mut back_light_2 = Disc::new(
         back,
@@ -130,8 +140,8 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
     back_light_2.plane.center.y -= 10.0;
     back_light_2.plane.center.x -= 5.0;
     back_light_2.plane.center.z -= 0.01;
-    back_light_2.plane.material = Material::Light(100.0);
-    
+    back_light_2.plane.material = bright_light;
+
     let mut back_light_3 = Disc::new(
         back,
         1_f32,
@@ -139,8 +149,8 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
     back_light_3.plane.center.y -= 10.0;
     back_light_3.plane.center.x += 5.0;
     back_light_3.plane.center.z -= 0.01;
-    back_light_3.plane.material = Material::Light(100.0);
-    
+    back_light_3.plane.material = bright_light;
+
     let mut back_light_4 = Disc::new(
         back,
         1_f32,
@@ -148,7 +158,7 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
     back_light_4.plane.center.y -= 20.0;
     back_light_4.plane.center.x += 5.0;
     back_light_4.plane.center.z -= 0.01;
-    back_light_4.plane.material = Material::Light(100.0);
+    back_light_4.plane.material = bright_light;
 
     let is: Vec<&Intersectable> = vec![
         &sphere, &sphere_2, &sphere_3, &sphere_4,
@@ -165,46 +175,71 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
         let x = i % width;
         let y = i / width;
 
-        let mut r = 0.0;
-        let mut g = 0.0;
-        let mut b = 0.0;
+        let mut rgb = Color::new(0.0, 0.0, 0.0);
 
         // Repeat N times for N samples.
         // Each sample is offset slightly for supersampling.
         for _ in 0..SAMPLE_COUNT {
-            //let mut xoffs = INV_SAMPLE_COUNT * (ss % SAMPLE_COUNT_SQRT) as f32;
-            //let mut yoffs = INV_SAMPLE_COUNT * (ss / SAMPLE_COUNT_SQRT) as f32;
-            let xoffs = rand::random::<f32>();// * 0.5;//INV_SAMPLE_COUNT;
-            let yoffs = rand::random::<f32>();// * 0.5;//INV_SAMPLE_COUNT;
-            let x_ratio = (x as f32 + xoffs - (wf / 2.0)) * 7.0 / wf;
-            let y_ratio = (y as f32 + yoffs - (hf / 2.0)) * 7.0 / hf;
-            let mut ray_dir_from_camera = Point3::new(x_ratio, y_ratio, 7.0);
+            // Pick an offset between 0 and 1 from the top-left corner of the
+            //   pixel on the image plane, where 1.0 = one pixel width.
+            let (xoffs, yoffs) = sample_pixel_random();
 
-            // Square bokeh. Maybe try a ring shape?
-            let camera_xoffs = rand::random::<f32>() * 0.5 - 0.25;
-            let camera_yoffs = rand::random::<f32>() * 0.5 - 0.25;
+            // The x and y coordinates at which this sample pierces the image plane,
+            //   ranging from the top left at (0, 0) to the bottom right at (1, 1).
+            let x_ratio = (x as f32 + xoffs - (wf / 2.0)) * focal_distance / wf;
+            let y_ratio = (y as f32 + yoffs - (hf / 2.0)) * focal_distance / hf;
+
+            // The direction from the exact center of the camera through which
+            //   this sample should be taken. For depth of field, we want to
+            //   nudge this slightly since the ray's origin will be at a point
+            //   sampled within the aperture, rather than the exact center.
+            let mut ray_dir_from_camera = Vector3::new(x_ratio, y_ratio, focal_distance);
+
+            let (camera_xoffs, camera_yoffs) = sample_aperture_square(aperture_width);
+
+            // The point that is sampled within the aperture.
             let aperture_sample_point = Point3::new(
                 camera.x + camera_xoffs,
                 camera.y + camera_yoffs,
                 camera.z
             );
+
+            // The actual direction from the sampled aperture point to the
+            //   sampled point within the current pixel in the image plane.
             let ray_dir = Vector3::new(
                 ray_dir_from_camera.x - camera_xoffs,
                 ray_dir_from_camera.y - camera_yoffs,
                 ray_dir_from_camera.z
             );
+
             let ray = Ray::new(aperture_sample_point, ray_dir);
-            let (rr, gg, bb) = trace_iterative(ray, &is);
-            r += rr;
-            g += gg;
-            b += bb;
+            let sample_rgb = trace_iterative(ray, &is);
+            rgb = rgb + sample_rgb;
         }
-        let (r, g, b) = (r * INV_SAMPLE_COUNT, g * INV_SAMPLE_COUNT, b * INV_SAMPLE_COUNT);
-        out_vec[offset]   = scale_radiance(r) as u8;
-        out_vec[offset+1] = scale_radiance(g) as u8;
-        out_vec[offset+2] = scale_radiance(b) as u8;
+        let Color { red, green, blue } = rgb * INV_SAMPLE_COUNT;
+        out_vec[offset]   = scale_radiance(red) as u8;
+        out_vec[offset+1] = scale_radiance(green) as u8;
+        out_vec[offset+2] = scale_radiance(blue) as u8;
         out_vec[offset+3] = 255;
     }
+}
+
+// A fairly inefficient way to choose a sample (sobol or jittered sampling
+//   would be better) but this works well enough.
+fn sample_pixel_random() -> (f32, f32) {
+    (
+        rand::random::<f32>(),
+        rand::random::<f32>()
+    )
+}
+
+// Samples the aperture as if it were shaped like a square. This can look a
+//   little weird, since I don't think square apertures are common.
+fn sample_aperture_square(aperture_width: f32) -> (f32, f32) {
+    (
+        rand::random::<f32>() * aperture_width - (aperture_width / 2.0),
+        rand::random::<f32>() * aperture_width - (aperture_width / 2.0)
+    )
 }
 
 fn scale_radiance(x: f32) -> f32 {
@@ -242,32 +277,24 @@ struct IntersectData {
     material: Material
 }
 
-fn trace_iterative(ray: Ray, thing: &Intersectable) -> (f32, f32, f32) {
+fn trace_iterative(ray: Ray, thing: &Intersectable) -> Color<f32> {
     let mut ray = ray;
-    let mut frag_color = (1.0, 1.0, 1.0);
+    let mut frag_color = Color::new(1.0, 1.0, 1.0);
     for _ in 0..4 {
         let hit = thing.intersect(&ray);
         if let Some(idata) = hit {
             match idata.material {
                 Material::Light(intensity) => {
-                    return (
-                        frag_color.0 * intensity,
-                        frag_color.1 * intensity,
-                        frag_color.2 * intensity,
-                    );
+                    return frag_color * intensity;
                 },
-                Material::Mirror => {
-                    frag_color = (
-                        frag_color.0 * 0.9,
-                        frag_color.1 * 0.9,
-                        frag_color.2 * 0.9,
-                    );
+                Material::Mirror(mirror_color) => {
+                    frag_color = frag_color * mirror_color;
                     ray = Ray::new(
                         idata.point + 0.00001 * idata.normal,
                         mirror(&idata.incident, &idata.normal),
                     );
                 },
-                Material::Candy(r, g, b) => {
+                Material::Candy(candy_color) => {
                     let will_reflect = rand::random::<f32>();
                     if will_reflect > 0.05 {
                         ray = Ray::new(
@@ -280,11 +307,7 @@ fn trace_iterative(ray: Ray, thing: &Intersectable) -> (f32, f32, f32) {
                             mirror(&idata.incident, &idata.normal),
                         );
                     }
-                    frag_color = (
-                        frag_color.0 * r,
-                        frag_color.1 * g,
-                        frag_color.2 * b,
-                    );
+                    frag_color = frag_color * candy_color;
                 },
             }
         } else {
@@ -292,17 +315,64 @@ fn trace_iterative(ray: Ray, thing: &Intersectable) -> (f32, f32, f32) {
         }
     }
 
-    ( frag_color.0 * 0.5
-    , frag_color.1 * 0.5
-    , frag_color.2 * 0.5
-    )
+    frag_color * 0.5
 }
 
 #[derive(Debug, Copy, Clone)]
 enum Material {
-    Mirror,
-    Light(f32),
-    Candy(f32, f32, f32)
+    Mirror(Color<f32>),
+    Light(Color<f32>),
+    Candy(Color<f32>)
+}
+
+#[derive(Debug, Copy, Clone)]
+struct Color<T> {
+    red: T,
+    green: T,
+    blue: T,
+}
+
+impl<T> Color<T> {
+    fn new(red: T, green: T, blue: T) -> Self {
+        Color {
+            red,
+            green,
+            blue,
+        }
+    }
+}
+
+impl ops::Add<Color<f32>> for Color<f32> {
+    type Output = Color<f32>;
+    fn add(self, rhs: Color<f32>) -> Color<f32> {
+        Color::new(
+            self.red + rhs.red,
+            self.green + rhs.green,
+            self.blue + rhs.blue,
+        )
+    }
+}
+
+impl ops::Mul<Color<f32>> for Color<f32> {
+    type Output = Color<f32>;
+    fn mul(self, rhs: Color<f32>) -> Color<f32> {
+        Color::new(
+            self.red * rhs.red,
+            self.green * rhs.green,
+            self.blue * rhs.blue,
+        )
+    }
+}
+
+impl ops::Mul<f32> for Color<f32> {
+    type Output = Color<f32>;
+    fn mul(self, rhs: f32) -> Color<f32> {
+        Color::new(
+            self.red * rhs,
+            self.green * rhs,
+            self.blue * rhs,
+        )
+    }
 }
 
 trait Intersectable {
@@ -451,7 +521,7 @@ mod tests {
         let plane = Plane {
             center: Point3::new(0.0, 0.0, 0.0),
             normal: Vector3::new(0.0, 1.0, 0.0),
-            material: Material::Mirror,
+            material: Material::Mirror(Color::new(0.0, 0.0, 0.0)),
         };
         let ray = Ray::new(
             Point3::new(0.0, 2.0, 0.0),
