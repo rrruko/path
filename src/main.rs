@@ -19,11 +19,21 @@ use std::f32::consts::FRAC_PI_2;
 use std::f64::consts::PI;
 use alga::linear::EuclideanSpace;
 
+use bvh::aabb::{AABB, Bounded};
+use bvh::bvh::BVH;
+use bvh::bounding_hierarchy::BHShape;
+
 const TWO_PI: f32 = 2.0 * PI as f32;
 
 const SAMPLE_COUNT_SQRT: i32 = 5;
 const SAMPLE_COUNT: i32 = SAMPLE_COUNT_SQRT * SAMPLE_COUNT_SQRT;
 const INV_SAMPLE_COUNT: f32 = 1.0 / (SAMPLE_COUNT as f32);
+
+enum Shape {
+    ShapeSphere(Sphere),
+    ShapePlane(Plane),
+    ShapeDisc(Disc)
+}
 
 fn main() {
     let width = 512;
@@ -160,12 +170,25 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
     back_light_4.plane.center.z -= 0.01;
     back_light_4.plane.material = bright_light;
 
-    let is: Vec<&Intersectable> = vec![
-        &sphere, &sphere_2, &sphere_3, &sphere_4,
-        &light_left,
-        &back_light_1, &back_light_2, &back_light_3, &back_light_4,
-        &plane, &sky, &back, &left, &right, &front
+    let mut is: Vec<Shape> = vec![
+        Shape::ShapeSphere(sphere),
+        Shape::ShapeSphere(sphere_2),
+        Shape::ShapeSphere(sphere_3),
+        Shape::ShapeSphere(sphere_4),
+        Shape::ShapeSphere(light_left),
+        Shape::ShapeDisc(back_light_1),
+        Shape::ShapeDisc(back_light_2),
+        Shape::ShapeDisc(back_light_3),
+        Shape::ShapeDisc(back_light_4),
+        Shape::ShapePlane(plane),
+        Shape::ShapePlane(sky),
+        Shape::ShapePlane(back),
+        Shape::ShapePlane(left),
+        Shape::ShapePlane(right),
+        Shape::ShapePlane(front)
     ];
+
+    let bvh = BVH::build(&mut is);
 
     let wf = width as f32;
     let hf = height as f32;
@@ -213,7 +236,7 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
             );
 
             let ray = Ray::new(aperture_sample_point, ray_dir);
-            let sample_rgb = trace_iterative(ray, &is);
+            let sample_rgb = trace_iterative(ray, &is, &bvh);
             rgb = rgb + sample_rgb;
         }
         let Color { red, green, blue } = rgb * INV_SAMPLE_COUNT;
@@ -277,11 +300,12 @@ struct IntersectData {
     material: Material
 }
 
-fn trace_iterative(ray: Ray, thing: &Intersectable) -> Color<f32> {
+fn trace_iterative(ray: Ray, is: &Vec<Shape>, thing: &BVH) -> Color<f32> {
     let mut ray = ray;
     let mut frag_color = Color::new(1.0, 1.0, 1.0);
     for _ in 0..4 {
-        let hit = thing.intersect(&ray);
+        let hit_objects: Vec<&Shape> = thing.traverse(&ray, is);
+        let hit = hit_objects.intersect(&ray);
         if let Some(idata) = hit {
             match idata.material {
                 Material::Light(intensity) => {
@@ -384,6 +408,7 @@ struct Plane {
     center: Point3<f32>,
     normal: Vector3<f32>,
     material: Material,
+    bh_node: usize,
 }
 
 impl Plane {
@@ -392,6 +417,7 @@ impl Plane {
             center,
             normal,
             material,
+            bh_node: 0,
         }
     }
 }
@@ -422,6 +448,7 @@ struct Sphere {
     radius: f32,
     radius2: f32,
     material: Material,
+    bh_node: usize,
 }
 
 impl Sphere {
@@ -431,6 +458,7 @@ impl Sphere {
             radius,
             radius2: radius * radius,
             material,
+            bh_node: 0
         }
     }
 }
@@ -509,6 +537,128 @@ impl<'a> Intersectable for Vec<&'a dyn Intersectable> {
             }
         }
         nearest_hit
+    }
+}
+
+impl<'a, T> Intersectable for Vec<&'a T> where T: Intersectable {
+    fn intersect(&self, ray: &Ray) -> Option<IntersectData> {
+        let mut nearest_dist = INFINITY;
+        let mut nearest_hit = None;
+        for intersectable in self {
+            let hit = intersectable.intersect(ray);
+            if let Some(h) = hit {
+                if h.dist < nearest_dist {
+                    nearest_dist = h.dist;
+                    nearest_hit = Some(h);
+                }
+            }
+        }
+        nearest_hit
+    }
+}
+
+impl Bounded for Sphere {
+    fn aabb(&self) -> AABB {
+        let half_size = Vector3::new(self.radius, self.radius, self.radius);
+        let min = self.center - half_size;
+        let max = self.center + half_size;
+        AABB::with_bounds(min, max)
+    }
+}
+
+impl BHShape for Sphere {
+    fn set_bh_node_index(&mut self, ix: usize) {
+        self.bh_node = ix;
+    }
+    fn bh_node_index(&self) -> usize {
+        self.bh_node
+    }
+}
+
+impl Bounded for Disc {
+    // Just using the same code as a sphere although it's not optimal
+    fn aabb(&self) -> AABB {
+        let half_size = Vector3::new(self.radius, self.radius, self.radius);
+        let min = self.plane.center - half_size;
+        let max = self.plane.center + half_size;
+        AABB::with_bounds(min, max)
+    }
+}
+
+impl BHShape for Disc {
+    fn set_bh_node_index(&mut self, ix: usize) {
+        self.plane.bh_node = ix;
+    }
+    fn bh_node_index(&self) -> usize {
+        self.plane.bh_node
+    }
+}
+
+impl Bounded for Plane {
+    // FIXME: fails if the plane isn't axis aligned
+    // Do huge bounding boxes hurt BVH performance ??
+    fn aabb (&self) -> AABB {
+        if self.normal.dot(&Vector3::new(0.0,1.0,1.0)) == 0.0 {
+            AABB::with_bounds(
+                self.center - Vector3::new(0.00001, 1000.0, 1000.0),
+                self.center + Vector3::new(0.00001, 1000.0, 1000.0))
+        } else if self.normal.dot(&Vector3::new(1.0,0.0,1.0)) == 0.0 {
+            AABB::with_bounds(
+                self.center - Vector3::new(1000.0, 0.00001, 1000.0),
+                self.center + Vector3::new(1000.0, 0.00001, 1000.0))
+        } else if self.normal.dot(&Vector3::new(1.0,1.0,0.0)) == 0.0 {
+            AABB::with_bounds(
+                self.center - Vector3::new(1000.0, 1000.0, 0.00001),
+                self.center + Vector3::new(1000.0, 1000.0, 0.00001))
+        } else {
+            panic!("A plane was not axis-aligned.")
+        }
+    }
+}
+
+impl BHShape for Plane {
+    fn set_bh_node_index(&mut self, ix: usize) {
+        self.bh_node = ix;
+    }
+    fn bh_node_index(&self) -> usize {
+        self.bh_node
+    }
+}
+
+impl Bounded for Shape {
+    fn aabb(&self) -> AABB {
+        match self {
+            Shape::ShapePlane(plane) => plane.aabb(),
+            Shape::ShapeSphere(sphere) => sphere.aabb(),
+            Shape::ShapeDisc(disc) => disc.aabb(),
+        }
+    }
+}
+
+impl BHShape for Shape {
+    fn set_bh_node_index(&mut self, ix:usize) {
+        match self {
+            Shape::ShapePlane(plane) => plane.set_bh_node_index(ix),
+            Shape::ShapeSphere(sphere) => sphere.set_bh_node_index(ix),
+            Shape::ShapeDisc(disc) => disc.set_bh_node_index(ix)
+        }
+    }
+    fn bh_node_index(&self) -> usize {
+        match self {
+            Shape::ShapePlane(plane) => plane.bh_node_index(),
+            Shape::ShapeSphere(sphere) => sphere.bh_node_index(),
+            Shape::ShapeDisc(disc) => disc.bh_node_index(),
+        }
+    }
+}
+
+impl Intersectable for Shape {
+    fn intersect(&self, ray: &Ray) -> Option<IntersectData> {
+        match self {
+            Shape::ShapePlane(plane) => plane.intersect(ray),
+            Shape::ShapeSphere(sphere) => sphere.intersect(ray),
+            Shape::ShapeDisc(disc) => disc.intersect(ray),
+        }
     }
 }
 
