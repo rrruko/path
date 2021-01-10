@@ -13,7 +13,10 @@ use std::io::BufWriter;
 use png::HasParameters;
 use nalgebra::{Vector3};
 use bvh::nalgebra::{Point2, Point3};
+use bvh::bounding_hierarchy::{BoundingHierarchy, BHShape};
 use bvh::ray::Ray;
+use bvh::aabb::{AABB, Bounded};
+use bvh::bvh::BVH;
 use std::f32::INFINITY;
 use std::f32::consts::FRAC_PI_2;
 use std::f64::consts::PI;
@@ -384,6 +387,7 @@ struct Plane {
     center: Point3<f32>,
     normal: Vector3<f32>,
     material: Material,
+    node_index: usize
 }
 
 impl Plane {
@@ -392,6 +396,7 @@ impl Plane {
             center,
             normal,
             material,
+            node_index: 0
         }
     }
 }
@@ -422,6 +427,7 @@ struct Sphere {
     radius: f32,
     radius2: f32,
     material: Material,
+    node_index: usize
 }
 
 impl Sphere {
@@ -431,6 +437,7 @@ impl Sphere {
             radius,
             radius2: radius * radius,
             material,
+            node_index: 0
         }
     }
 }
@@ -476,6 +483,7 @@ impl Intersectable for Sphere {
 struct Disc {
     plane: Plane,
     radius: f32,
+    node_index: usize
 }
 
 impl Disc {
@@ -483,6 +491,7 @@ impl Disc {
         Disc {
             plane,
             radius,
+            node_index: 0
         }
     }
 }
@@ -510,6 +519,68 @@ impl<'a> Intersectable for Vec<&'a dyn Intersectable> {
         }
         nearest_hit
     }
+}
+
+impl Bounded for Sphere {
+  fn aabb(&self) -> AABB {
+    let half_size = Vector3::new(self.radius, self.radius, self.radius);
+    let min = self.center - half_size;
+    let max = self.center + half_size;
+    AABB::with_bounds(min, max)
+  }
+}
+
+impl BHShape for Sphere {
+  fn set_bh_node_index(&mut self, index: usize) {
+    self.node_index = index;
+  }
+  fn bh_node_index(&self) -> usize {
+    self.node_index
+  }
+}
+
+impl Bounded for Plane {
+  fn aabb(&self) -> AABB {
+    let half_size = Vector3::new(100.0, 100.0, 100.0);
+    let one = Vector3::new(1.0, 1.0, 1.0);
+    let d = one - self.normal.component_mul(&self.normal);
+    let diff = half_size.component_mul(&d.map(|x| x.sqrt()));
+    let min = self.center - diff;
+    let max = self.center + diff;
+    AABB::with_bounds(min, max)
+  }
+}
+
+impl BHShape for Plane {
+  fn set_bh_node_index(&mut self, index: usize) {
+    self.node_index = index;
+  }
+
+  fn bh_node_index(&self) -> usize {
+    self.node_index
+  }
+}
+
+impl Bounded for Disc { 
+  fn aabb(&self) -> AABB {
+    let half_size = Vector3::new(self.radius, self.radius, self.radius);
+    let one = Vector3::new(1.0, 1.0, 1.0);
+    let d = one - self.plane.normal.component_mul(&self.plane.normal);
+    let diff = half_size.component_mul(&d.map(|x| x.sqrt()));
+    let min = self.plane.center - diff;
+    let max = self.plane.center + diff;
+    AABB::with_bounds(min, max)
+  }
+}
+
+impl BHShape for Disc {
+  fn set_bh_node_index(&mut self, index: usize) {
+    self.node_index = index;
+  }
+
+  fn bh_node_index(&self) -> usize {
+    self.node_index
+  }
 }
 
 #[cfg(test)]
