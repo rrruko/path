@@ -29,8 +29,8 @@ const SAMPLE_COUNT: i32 = SAMPLE_COUNT_SQRT * SAMPLE_COUNT_SQRT;
 const INV_SAMPLE_COUNT: f32 = 1.0 / (SAMPLE_COUNT as f32);
 
 fn main() {
-    let width = 100;
-    let height = 100;
+    let width = 256;
+    let height = 256;
     let mut out_vec = vec![0; 4 * width * height];
     make_image(width, height, &mut out_vec);
     write_image(&out_vec, width as u32, height as u32, r"test.png");
@@ -57,39 +57,39 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
     let dim_light = Material::Light(Color::new(10.0, 10.0, 10.0));
     let white = Material::Candy(Color::new(0.95, 0.95, 0.95));
 
-    let sphere = Sphere::new(
+    let sphere = Prim::PrimSphere(Sphere::new(
         Point3::new(0.0, 0.0, 4.0),
         2.0,
         mirror,
-    );
+    ));
 
-    let sphere_2 = Sphere::new(
+    let sphere_2 = Prim::PrimSphere(Sphere::new(
         Point3::new(0.0, 0.0, -8.0),
         2.0,
         mirror,
-    );
+    ));
 
-    let sphere_3 = Sphere::new(
+    let sphere_3 = Prim::PrimSphere(Sphere::new(
         Point3::new(-1.8, 1.0, 1.0),
         1.0,
         red,
-    );
+    ));
 
-    let sphere_4 = Sphere::new(
+    let sphere_4 = Prim::PrimSphere(Sphere::new(
         Point3::new(1.8, 1.0, -2.0),
         1.0,
         blue,
-    );
+    ));
 
     let camera = Point3::new(0.0, 0.0, -5.0);
     let focal_distance = 7.0; // Focus is on the plane 7 units in front of the camera.
     let aperture_width = 0.5;
 
-    let light_left = Sphere::new(
+    let light_left = Prim::PrimSphere(Sphere::new(
         Point3::new(-20.0, -10.0, 0.0),
         1.0,
         bright_light,
-    );
+    ));
 
     let plane = Plane::new(
         Point3::new(0.0, 2.0, 0.0),
@@ -163,8 +163,19 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
     back_light_4.plane.center.z -= 0.01;
     back_light_4.plane.material = bright_light;
 
-    let mut is: Vec<Sphere> = vec![
+    let mut is: Vec<Prim> = vec![
         sphere, sphere_2, sphere_3, sphere_4,
+        light_left,
+        Prim::PrimDisc(back_light_1),
+        Prim::PrimDisc(back_light_2),
+        Prim::PrimDisc(back_light_3),
+        Prim::PrimDisc(back_light_4),
+        to_disc(plane),
+        to_disc(sky),
+        to_disc(back),
+        to_disc(front),
+        to_disc(left),
+        to_disc(right)
     ];
 
     let wf = width as f32;
@@ -293,14 +304,14 @@ fn nearest_intersect(a: Option<IntersectData>, b: Option<IntersectData>) -> Opti
   }
 }
 
-fn closest_intersect(ray: &Ray, bvh: &BVH, is: &Vec<Sphere>) -> Option<IntersectData> {
+fn closest_intersect(ray: &Ray, bvh: &BVH, is: &Vec<Prim>) -> Option<IntersectData> {
     let hits = bvh.traverse(ray, is);
     hits
       .iter()
       .fold(None, |acc, hit| nearest_intersect(acc, hit.intersect(ray)))
 }
 
-fn trace_iterative(ray: Ray, is: &Vec<Sphere>, bvh: &BVH) -> Color<f32> {
+fn trace_iterative(ray: Ray, is: &Vec<Prim>, bvh: &BVH) -> Color<f32> {
     let mut ray = ray;
     let mut frag_color = Color::new(1.0, 1.0, 1.0);
     for _ in 0..4 {
@@ -601,6 +612,52 @@ impl BHShape for Disc {
   fn bh_node_index(&self) -> usize {
     self.node_index
   }
+}
+
+enum Prim {
+  PrimSphere(Sphere),
+  PrimDisc(Disc)
+}
+
+impl Bounded for Prim {
+  fn aabb(&self) -> AABB {
+    match self {
+      Prim::PrimSphere(s) => s.aabb(),
+      Prim::PrimDisc(d) => d.aabb()
+    }
+  }
+}
+
+impl BHShape for Prim {
+  fn set_bh_node_index(&mut self, index: usize) {
+    match self {
+      Prim::PrimSphere(s) => { s.node_index = index; },
+      Prim::PrimDisc(d) => { d.node_index = index; }
+    }
+  }
+
+  fn bh_node_index(&self) -> usize {
+    match self {
+      Prim::PrimSphere(s) => s.node_index,
+      Prim::PrimDisc(d) => d.node_index
+    }
+  }
+}
+
+impl Intersectable for Prim { 
+    fn intersect(&self, ray: &Ray) -> Option<IntersectData> {
+        match self {
+            Prim::PrimSphere(s) => s.intersect(ray),
+            Prim::PrimDisc(d) => d.intersect(ray)
+        }
+    }
+}
+
+fn to_disc(plane: Plane) -> Prim {
+  Prim::PrimDisc(Disc::new(
+    plane,
+    100.0,
+  ))
 }
 
 #[cfg(test)]
