@@ -160,7 +160,7 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
     back_light_4.plane.center.z -= 0.01;
     back_light_4.plane.material = bright_light;
 
-    let is: Vec<&Intersectable> = vec![
+    let is: Vec<&dyn Intersectable> = vec![
         &sphere, &sphere_2, &sphere_3, &sphere_4,
         &light_left,
         &back_light_1, &back_light_2, &back_light_3, &back_light_4,
@@ -193,7 +193,7 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
             //   this sample should be taken. For depth of field, we want to
             //   nudge this slightly since the ray's origin will be at a point
             //   sampled within the aperture, rather than the exact center.
-            let mut ray_dir_from_camera = Vector3::new(x_ratio, y_ratio, focal_distance);
+            let ray_dir_from_camera = Vector3::new(x_ratio, y_ratio, focal_distance);
 
             let (camera_xoffs, camera_yoffs) = sample_aperture_square(aperture_width);
 
@@ -277,7 +277,7 @@ struct IntersectData {
     material: Material
 }
 
-fn trace_iterative(ray: Ray, thing: &Intersectable) -> Color<f32> {
+fn trace_iterative(ray: Ray, thing: &dyn Intersectable) -> Color<f32> {
     let mut ray = ray;
     let mut frag_color = Color::new(1.0, 1.0, 1.0);
     for _ in 0..4 {
