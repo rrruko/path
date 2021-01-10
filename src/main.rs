@@ -24,13 +24,13 @@ use alga::linear::EuclideanSpace;
 
 const TWO_PI: f32 = 2.0 * PI as f32;
 
-const SAMPLE_COUNT_SQRT: i32 = 5;
+const SAMPLE_COUNT_SQRT: i32 = 4;
 const SAMPLE_COUNT: i32 = SAMPLE_COUNT_SQRT * SAMPLE_COUNT_SQRT;
 const INV_SAMPLE_COUNT: f32 = 1.0 / (SAMPLE_COUNT as f32);
 
 fn main() {
-    let width = 512;
-    let height = 512;
+    let width = 100;
+    let height = 100;
     let mut out_vec = vec![0; 4 * width * height];
     make_image(width, height, &mut out_vec);
     write_image(&out_vec, width as u32, height as u32, r"test.png");
@@ -163,16 +163,14 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
     back_light_4.plane.center.z -= 0.01;
     back_light_4.plane.material = bright_light;
 
-    let is: Vec<&dyn Intersectable> = vec![
-        &sphere, &sphere_2, &sphere_3, &sphere_4,
-        &light_left,
-        &back_light_1, &back_light_2, &back_light_3, &back_light_4,
-        &plane, &sky, &back, &left, &right, &front
+    let mut is: Vec<Sphere> = vec![
+        sphere, sphere_2, sphere_3, sphere_4,
     ];
 
     let wf = width as f32;
     let hf = height as f32;
 
+    let bvh = BVH::build(&mut is);
     for i in 0..width * height {
         let offset = 4 * i;
         let x = i % width;
@@ -216,7 +214,7 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
             );
 
             let ray = Ray::new(aperture_sample_point, ray_dir);
-            let sample_rgb = trace_iterative(ray, &is);
+            let sample_rgb = trace_iterative(ray, &is, &bvh);
             rgb = rgb + sample_rgb;
         }
         let Color { red, green, blue } = rgb * INV_SAMPLE_COUNT;
@@ -280,11 +278,33 @@ struct IntersectData {
     material: Material
 }
 
-fn trace_iterative(ray: Ray, thing: &dyn Intersectable) -> Color<f32> {
+fn nearest_intersect(a: Option<IntersectData>, b: Option<IntersectData>) -> Option<IntersectData> {
+  match (a, b) {
+    (None, None) => None,
+    (Some(aa), None) => Some(aa),
+    (None, Some(bb)) => Some(bb),
+    (Some(aa), Some(bb)) => {
+      if aa.dist > bb.dist {
+        Some(bb)
+      } else {
+        Some(aa)
+      }
+    }
+  }
+}
+
+fn closest_intersect(ray: &Ray, bvh: &BVH, is: &Vec<Sphere>) -> Option<IntersectData> {
+    let hits = bvh.traverse(ray, is);
+    hits
+      .iter()
+      .fold(None, |acc, hit| nearest_intersect(acc, hit.intersect(ray)))
+}
+
+fn trace_iterative(ray: Ray, is: &Vec<Sphere>, bvh: &BVH) -> Color<f32> {
     let mut ray = ray;
     let mut frag_color = Color::new(1.0, 1.0, 1.0);
     for _ in 0..4 {
-        let hit = thing.intersect(&ray);
+        let hit = closest_intersect(&ray, bvh, is);
         if let Some(idata) = hit {
             match idata.material {
                 Material::Light(intensity) => {
