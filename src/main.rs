@@ -5,7 +5,9 @@ extern crate bvh;
 extern crate nalgebra;
 extern crate png;
 extern crate rand;
+extern crate tobj;
 
+use std::cmp;
 use std::ops;
 use std::path::Path;
 use std::fs::File;
@@ -24,7 +26,7 @@ use alga::linear::EuclideanSpace;
 
 const TWO_PI: f32 = 2.0 * PI as f32;
 
-const SAMPLE_COUNT_SQRT: i32 = 8;
+const SAMPLE_COUNT_SQRT: i32 = 4;
 const SAMPLE_COUNT: i32 = SAMPLE_COUNT_SQRT * SAMPLE_COUNT_SQRT;
 const INV_SAMPLE_COUNT: f32 = 1.0 / (SAMPLE_COUNT as f32);
 
@@ -92,6 +94,27 @@ fn make_objects() -> Vec<Prim> {
         ));
         prims.push(sphere);
     }
+
+    let mut triverts = vec![];
+    for point in regular_polygon(3).iter() {
+        triverts.push(Point3::new(point.0, point.1, 2.0));
+    }
+
+    let tri = Prim::PrimTri(
+        Tri::new(triverts[0], triverts[1], triverts[2], red)
+    );
+    prims.push(tri);
+
+    /*
+    let obj = tobj::load_obj("buddha.obj", true);
+    let (models, materials) = obj.unwrap();
+    println!("# of models: {}", models.len());
+    println!("# of materials: {}", materials.len());
+    for model in models {
+        let mesh = model.mesh;
+        let i = mesh.indices
+    }*/
+
     prims
 }
 
@@ -548,14 +571,16 @@ impl BHShape for Disc {
 
 enum Prim {
   PrimSphere(Sphere),
-  PrimDisc(Disc)
+  PrimDisc(Disc),
+  PrimTri(Tri)
 }
 
 impl Bounded for Prim {
   fn aabb(&self) -> AABB {
     match self {
       Prim::PrimSphere(s) => s.aabb(),
-      Prim::PrimDisc(d) => d.aabb()
+      Prim::PrimDisc(d) => d.aabb(),
+      Prim::PrimTri(t) => t.aabb()
     }
   }
 }
@@ -564,14 +589,16 @@ impl BHShape for Prim {
   fn set_bh_node_index(&mut self, index: usize) {
     match self {
       Prim::PrimSphere(s) => { s.node_index = index; },
-      Prim::PrimDisc(d) => { d.node_index = index; }
+      Prim::PrimDisc(d) => { d.node_index = index; },
+      Prim::PrimTri(t) => { t.node_index = index; }
     }
   }
 
   fn bh_node_index(&self) -> usize {
     match self {
       Prim::PrimSphere(s) => s.node_index,
-      Prim::PrimDisc(d) => d.node_index
+      Prim::PrimDisc(d) => d.node_index,
+      Prim::PrimTri(t) => t.node_index
     }
   }
 }
@@ -580,9 +607,91 @@ impl Intersectable for Prim {
     fn intersect(&self, ray: &Ray) -> Option<IntersectData> {
         match self {
             Prim::PrimSphere(s) => s.intersect(ray),
-            Prim::PrimDisc(d) => d.intersect(ray)
+            Prim::PrimDisc(d) => d.intersect(ray),
+            Prim::PrimTri(t) => t.intersect(ray)
         }
     }
+}
+
+struct Tri {
+    x: Point3<f32>,
+    y: Point3<f32>,
+    z: Point3<f32>,
+    material: Material,
+    node_index: usize
+}
+
+impl Tri {
+    fn new(x: Point3<f32>, y: Point3<f32>, z: Point3<f32>, material: Material) -> Self {
+        Tri {
+            x,
+            y,
+            z,
+            material,
+            node_index: 0
+        }
+    }
+}
+
+impl Intersectable for Tri {
+    fn intersect(&self, ray: &Ray) -> Option<IntersectData> {
+        let eps = 0.0000001;
+        let edge1 = self.y - self.x;
+        let edge2 = self.z - self.x;
+        let h = ray.direction.cross(&edge2);
+        let a = edge1.dot(&h);
+        if a > -eps && a < eps {
+            return None;
+        }
+        let f = 1.0 / a;
+        let s = ray.origin - self.x;
+        let u = f * s.dot(&h);
+        if u < 0.0 || u > 1.0 {
+            return None;
+        }
+        let q = s.cross(&edge1);
+        let v = f * ray.direction.dot(&q);
+        if v < 0.0 || u + v > 1.0 {
+            return None;
+        }
+        let t = f * edge2.dot(&q);
+        if t > eps {
+            Some(IntersectData {
+                point: ray.origin + ray.direction * t,
+                normal: edge1.cross(&edge2),
+                uv: Point2::new(0.0, 0.0),
+                dist: t,
+                incident: ray.direction,
+                material: self.material
+            })
+        } else {
+            None
+        }
+    }
+}
+
+impl Bounded for Tri {
+  fn aabb(&self) -> AABB {
+      let minx = self.x.x.min(self.y.x).min(self.z.x);
+      let miny = self.x.y.min(self.y.y).min(self.z.y);
+      let minz = self.x.z.min(self.y.z).min(self.z.z);
+      let maxx = self.x.x.max(self.y.x).max(self.z.x);
+      let maxy = self.x.y.max(self.y.y).max(self.z.y);
+      let maxz = self.x.z.max(self.y.z).max(self.z.z);
+      AABB::with_bounds(
+          Point3::new(minx, miny, minz),
+          Point3::new(maxx, maxy, maxz)
+      )
+  }
+}
+
+impl BHShape for Tri {
+  fn set_bh_node_index(&mut self, index: usize) {
+    self.node_index = index;
+  }
+  fn bh_node_index(&self) -> usize {
+    self.node_index
+  }
 }
 
 fn to_disc(plane: Plane) -> Prim {
