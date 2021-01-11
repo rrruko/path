@@ -602,6 +602,7 @@ mod tests {
             center: Point3::new(0.0, 0.0, 0.0),
             normal: Vector3::new(0.0, 1.0, 0.0),
             material: Material::Mirror(Color::new(0.0, 0.0, 0.0)),
+            node_index: 0
         };
         let ray = Ray::new(
             Point3::new(0.0, 2.0, 0.0),
