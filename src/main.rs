@@ -29,10 +29,11 @@ const SAMPLE_COUNT: i32 = SAMPLE_COUNT_SQRT * SAMPLE_COUNT_SQRT;
 const INV_SAMPLE_COUNT: f32 = 1.0 / (SAMPLE_COUNT as f32);
 
 fn main() {
-    let width = 256;
-    let height = 256;
+    let width = 512;
+    let height = 512;
     let mut out_vec = vec![0; 4 * width * height];
-    make_image(width, height, &mut out_vec);
+    let mut objs = make_objects();
+    make_image(width, height, &mut out_vec, &mut objs);
     write_image(&out_vec, width as u32, height as u32, r"test.png");
 }
 
@@ -48,8 +49,7 @@ fn write_image(pixel_buffer: &[u8], width: u32, height: u32, path: &str) {
     writer.write_image_data(&pixel_buffer).unwrap();
 }
 
-#[allow(many_single_char_names)]
-fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
+fn make_objects() -> Vec<Prim> {
     let mirror = Material::Mirror(Color::new(0.9, 0.9, 0.9));
     let red = Material::Candy(Color::new(0.9, 0.2, 0.3));
     let blue = Material::Candy(Color::new(0.2, 0.3, 0.9));
@@ -80,10 +80,6 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
         1.0,
         blue,
     ));
-
-    let camera = Point3::new(0.0, 0.0, -5.0);
-    let focal_distance = 7.0; // Focus is on the plane 7 units in front of the camera.
-    let aperture_width = 0.5;
 
     let light_left = Prim::PrimSphere(Sphere::new(
         Point3::new(-20.0, -10.0, 0.0),
@@ -163,7 +159,7 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
     back_light_4.plane.center.z -= 0.01;
     back_light_4.plane.material = bright_light;
 
-    let mut is: Vec<Prim> = vec![
+    vec![
         sphere, sphere_2, sphere_3, sphere_4,
         light_left,
         Prim::PrimDisc(back_light_1),
@@ -176,12 +172,20 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
         to_disc(front),
         to_disc(left),
         to_disc(right)
-    ];
+    ]
+}
+
+#[allow(many_single_char_names)]
+fn make_image(width: usize, height: usize, out_vec: &mut [u8], objects: &mut Vec<Prim>) {
+    let camera = Point3::new(0.0, 0.0, -5.0);
+    let focal_distance = 7.0; // Focus is on the plane 7 units in front of the camera.
+    let aperture_width = 0.5;
+
 
     let wf = width as f32;
     let hf = height as f32;
 
-    let bvh = BVH::build(&mut is);
+    let bvh = BVH::build(objects);
     for i in 0..width * height {
         let offset = 4 * i;
         let x = i % width;
@@ -225,7 +229,7 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
             );
 
             let ray = Ray::new(aperture_sample_point, ray_dir);
-            let sample_rgb = trace_iterative(ray, &is, &bvh);
+            let sample_rgb = trace_iterative(ray, objects, &bvh);
             rgb = rgb + sample_rgb;
         }
         let Color { red, green, blue } = rgb * INV_SAMPLE_COUNT;
@@ -251,6 +255,15 @@ fn sample_aperture_square(aperture_width: f32) -> (f32, f32) {
     (
         rand::random::<f32>() * aperture_width - (aperture_width / 2.0),
         rand::random::<f32>() * aperture_width - (aperture_width / 2.0)
+    )
+}
+
+fn sample_aperture_circle(aperture_width: f32) -> (f32, f32) {
+    let r = aperture_width * rand::random::<f32>().sqrt();
+    let theta = rand::random::<f32>() * 2.0 * std::f32::consts::PI;
+    (
+        r * theta.cos(),
+        r * theta.sin()
     )
 }
 
