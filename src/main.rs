@@ -24,7 +24,7 @@ use alga::linear::EuclideanSpace;
 
 const TWO_PI: f32 = 2.0 * PI as f32;
 
-const SAMPLE_COUNT_SQRT: i32 = 4;
+const SAMPLE_COUNT_SQRT: i32 = 8;
 const SAMPLE_COUNT: i32 = SAMPLE_COUNT_SQRT * SAMPLE_COUNT_SQRT;
 const INV_SAMPLE_COUNT: f32 = 1.0 / (SAMPLE_COUNT as f32);
 
@@ -49,130 +49,50 @@ fn write_image(pixel_buffer: &[u8], width: u32, height: u32, path: &str) {
     writer.write_image_data(&pixel_buffer).unwrap();
 }
 
+fn regular_polygon(n: i32) -> Vec<(f32, f32)> {
+    let mut vertices = vec![];
+    let diff_theta = 2.0 * std::f32::consts::PI / (n as f32);
+    for i in 0..n {
+        vertices.push(((i as f32 * diff_theta).sin(), (i as f32 * diff_theta).cos()));
+    }
+    vertices
+}
+
 fn make_objects() -> Vec<Prim> {
+    let mut prims = vec![];
     let mirror = Material::Mirror(Color::new(0.9, 0.9, 0.9));
     let red = Material::Candy(Color::new(0.9, 0.2, 0.3));
     let blue = Material::Candy(Color::new(0.2, 0.3, 0.9));
-    let bright_light = Material::Light(Color::new(500.0, 500.0, 500.0));
+    let bright_light = Material::Light(Color::new(20.0, 20.0, 20.0));
     let dim_light = Material::Light(Color::new(10.0, 10.0, 10.0));
     let white = Material::Candy(Color::new(0.95, 0.95, 0.95));
 
-    let sphere = Prim::PrimSphere(Sphere::new(
-        Point3::new(0.0, 0.0, 4.0),
-        2.0,
-        mirror,
-    ));
-
-    let sphere_2 = Prim::PrimSphere(Sphere::new(
+    let light = Prim::PrimSphere(Sphere::new(
         Point3::new(0.0, 0.0, -8.0),
         2.0,
-        mirror,
-    ));
-
-    let sphere_3 = Prim::PrimSphere(Sphere::new(
-        Point3::new(-1.8, 1.0, 1.0),
-        1.0,
-        red,
-    ));
-
-    let sphere_4 = Prim::PrimSphere(Sphere::new(
-        Point3::new(1.8, 1.0, -2.0),
-        1.0,
-        blue,
-    ));
-
-    let light_left = Prim::PrimSphere(Sphere::new(
-        Point3::new(-20.0, -10.0, 0.0),
-        1.0,
         bright_light,
     ));
+    prims.push(light);
 
-    let plane = Plane::new(
-        Point3::new(0.0, 2.0, 0.0),
-        Vector3::new(0.0, -1.0, 0.0),
-        white,
+    let bgdisc = Disc::new(
+        Plane::new(
+            Point3::new(0.0, 0.0, -9.0),
+            Vector3::new(0.0, 0.0, 1.0),
+            white
+        ),
+        100.0,
     );
+    prims.push(Prim::PrimDisc(bgdisc));
 
-    let sky = Plane::new(
-        Point3::new(0.0, -50.0, 0.0),
-        Vector3::new(0.0, 1.0, 0.0),
-        white,
-    );
-
-    let back = Plane::new(
-        Point3::new(0.0, 0.0, 50.0),
-        Vector3::new(0.0, 0.0, -1.0),
-        white,
-    );
-
-    let front = Plane::new(
-        Point3::new(0.0, 0.0, -50.0),
-        Vector3::new(0.0, 0.0, 1.0),
-        white,
-    );
-
-    let left = Plane::new(
-        Point3::new(-50.0, 0.0, 0.0),
-        Vector3::new(1.0, 0.0, 0.0),
-        dim_light,
-    );
-
-    let right = Plane::new(
-        Point3::new(50.0, 0.0, 0.0),
-        Vector3::new(-1.0, 0.0, 0.0),
-        white,
-    );
-
-    let mut back_light_1 = Disc::new(
-        back,
-        1_f32,
-    );
-    back_light_1.plane.center.y -= 20.0;
-    back_light_1.plane.center.x -= 5.0;
-    back_light_1.plane.center.z -= 0.01;
-    back_light_1.plane.material = bright_light;
-
-    let mut back_light_2 = Disc::new(
-        back,
-        1_f32,
-    );
-    back_light_2.plane.center.y -= 10.0;
-    back_light_2.plane.center.x -= 5.0;
-    back_light_2.plane.center.z -= 0.01;
-    back_light_2.plane.material = bright_light;
-
-    let mut back_light_3 = Disc::new(
-        back,
-        1_f32,
-    );
-    back_light_3.plane.center.y -= 10.0;
-    back_light_3.plane.center.x += 5.0;
-    back_light_3.plane.center.z -= 0.01;
-    back_light_3.plane.material = bright_light;
-
-    let mut back_light_4 = Disc::new(
-        back,
-        1_f32,
-    );
-    back_light_4.plane.center.y -= 20.0;
-    back_light_4.plane.center.x += 5.0;
-    back_light_4.plane.center.z -= 0.01;
-    back_light_4.plane.material = bright_light;
-
-    vec![
-        sphere, sphere_2, sphere_3, sphere_4,
-        light_left,
-        Prim::PrimDisc(back_light_1),
-        Prim::PrimDisc(back_light_2),
-        Prim::PrimDisc(back_light_3),
-        Prim::PrimDisc(back_light_4),
-        to_disc(plane),
-        to_disc(sky),
-        to_disc(back),
-        to_disc(front),
-        to_disc(left),
-        to_disc(right)
-    ]
+    for point in regular_polygon(5).iter() {
+        let sphere = Prim::PrimSphere(Sphere::new(
+            Point3::new(3.0 * point.0, 3.0 * point.1, 4.0),
+            2.0,
+            mirror
+        ));
+        prims.push(sphere);
+    }
+    prims
 }
 
 #[allow(many_single_char_names)]
@@ -180,7 +100,6 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8], objects: &mut Vec
     let camera = Point3::new(0.0, 0.0, -5.0);
     let focal_distance = 7.0; // Focus is on the plane 7 units in front of the camera.
     let aperture_width = 0.5;
-
 
     let wf = width as f32;
     let hf = height as f32;
@@ -327,7 +246,7 @@ fn closest_intersect(ray: &Ray, bvh: &BVH, is: &Vec<Prim>) -> Option<IntersectDa
 fn trace_iterative(ray: Ray, is: &Vec<Prim>, bvh: &BVH) -> Color<f32> {
     let mut ray = ray;
     let mut frag_color = Color::new(1.0, 1.0, 1.0);
-    for _ in 0..4 {
+    for _ in 0..8 {
         let hit = closest_intersect(&ray, bvh, is);
         if let Some(idata) = hit {
             match idata.material {
