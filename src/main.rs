@@ -5,6 +5,7 @@ extern crate bvh;
 extern crate nalgebra;
 extern crate png;
 extern crate rand;
+extern crate bluenoisers;
 
 use std::ops;
 use std::path::Path;
@@ -23,6 +24,8 @@ use bvh::aabb::{AABB, Bounded};
 use bvh::bvh::BVH;
 use bvh::bounding_hierarchy::BHShape;
 
+use bluenoisers::blue_noise;
+
 const TWO_PI: f32 = 2.0 * PI as f32;
 
 const SAMPLE_COUNT_SQRT: i32 = 5;
@@ -33,6 +36,20 @@ enum Shape {
     ShapeSphere(Sphere),
     ShapePlane(Plane),
     ShapeDisc(Disc)
+}
+
+struct BlueNoiseGenerator {
+    ix: usize,
+    samples: Vec<Vec<f64>>,
+}
+
+impl BlueNoiseGenerator {
+    fn get(&mut self) -> (f32, f32) {
+        let result = &self.samples[self.ix];
+        self.ix += 1;
+        self.ix %= self.samples.len();
+        (result[0] as f32, result[1] as f32)
+    }
 }
 
 fn main() {
@@ -63,30 +80,6 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
     let bright_light = Material::Light(Color::new(500.0, 500.0, 500.0));
     let dim_light = Material::Light(Color::new(10.0, 10.0, 10.0));
     let white = Material::Candy(Color::new(0.95, 0.95, 0.95));
-
-    let sphere = Sphere::new(
-        Point3::new(0.0, 0.0, 4.0),
-        2.0,
-        mirror,
-    );
-
-    let sphere_2 = Sphere::new(
-        Point3::new(0.0, 0.0, -8.0),
-        2.0,
-        mirror,
-    );
-
-    let sphere_3 = Sphere::new(
-        Point3::new(-1.8, 1.0, 1.0),
-        1.0,
-        red,
-    );
-
-    let sphere_4 = Sphere::new(
-        Point3::new(1.8, 1.0, -2.0),
-        1.0,
-        blue,
-    );
 
     let camera = Point3::new(0.0, 0.0, -5.0);
     let focal_distance = 7.0; // Focus is on the plane 7 units in front of the camera.
@@ -171,10 +164,6 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
     back_light_4.plane.material = bright_light;
 
     let mut is: Vec<Shape> = vec![
-        Shape::ShapeSphere(sphere),
-        Shape::ShapeSphere(sphere_2),
-        Shape::ShapeSphere(sphere_3),
-        Shape::ShapeSphere(sphere_4),
         Shape::ShapeSphere(light_left),
         Shape::ShapeDisc(back_light_1),
         Shape::ShapeDisc(back_light_2),
@@ -188,10 +177,29 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
         Shape::ShapePlane(front)
     ];
 
+    for i in 0..10000 {
+        let x = i % 100;
+        let y = i / 100;
+        let sphere = Sphere::new(
+            Point3::new(x as f32, y as f32, 0.0),
+            1.0,
+            if i % 2 == 0 { red } else { blue },
+        );
+        is.push(Shape::ShapeSphere(sphere));
+    }
+
     let bvh = BVH::build(&mut is);
+    bvh.pretty_print();
 
     let wf = width as f32;
     let hf = height as f32;
+
+    println!("Generating bn");
+    let mut bn = BlueNoiseGenerator {
+        ix: 0,
+        samples: blue_noise(vec![1.0,1.0], 0.01, 30),
+    };
+    println!("Generated bn");
 
     for i in 0..width * height {
         let offset = 4 * i;
@@ -205,7 +213,7 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
         for _ in 0..SAMPLE_COUNT {
             // Pick an offset between 0 and 1 from the top-left corner of the
             //   pixel on the image plane, where 1.0 = one pixel width.
-            let (xoffs, yoffs) = sample_pixel_random();
+            let (xoffs, yoffs) = sample_pixel_random(&mut bn);
 
             // The x and y coordinates at which this sample pierces the image plane,
             //   ranging from the top left at (0, 0) to the bottom right at (1, 1).
@@ -218,7 +226,7 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
             //   sampled within the aperture, rather than the exact center.
             let mut ray_dir_from_camera = Vector3::new(x_ratio, y_ratio, focal_distance);
 
-            let (camera_xoffs, camera_yoffs) = sample_aperture_square(aperture_width);
+            let (camera_xoffs, camera_yoffs) = sample_aperture_square(&mut bn, aperture_width);
 
             // The point that is sampled within the aperture.
             let aperture_sample_point = Point3::new(
@@ -236,7 +244,7 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
             );
 
             let ray = Ray::new(aperture_sample_point, ray_dir);
-            let sample_rgb = trace_iterative(ray, &is, &bvh);
+            let sample_rgb = trace_iterative(&mut bn, ray, &is, &bvh);
             rgb = rgb + sample_rgb;
         }
         let Color { red, green, blue } = rgb * INV_SAMPLE_COUNT;
@@ -247,21 +255,17 @@ fn make_image(width: usize, height: usize, out_vec: &mut [u8]) {
     }
 }
 
-// A fairly inefficient way to choose a sample (sobol or jittered sampling
-//   would be better) but this works well enough.
-fn sample_pixel_random() -> (f32, f32) {
-    (
-        rand::random::<f32>(),
-        rand::random::<f32>()
-    )
+fn sample_pixel_random(bn: &mut BlueNoiseGenerator) -> (f32, f32) {
+    bn.get()
 }
 
 // Samples the aperture as if it were shaped like a square. This can look a
 //   little weird, since I don't think square apertures are common.
-fn sample_aperture_square(aperture_width: f32) -> (f32, f32) {
+fn sample_aperture_square(bn: &mut BlueNoiseGenerator, aperture_width: f32) -> (f32, f32) {
+    let (x, y) = bn.get();
     (
-        rand::random::<f32>() * aperture_width - (aperture_width / 2.0),
-        rand::random::<f32>() * aperture_width - (aperture_width / 2.0)
+        x * aperture_width - (aperture_width / 2.0),
+        y * aperture_width - (aperture_width / 2.0)
     )
 }
 
@@ -269,9 +273,8 @@ fn scale_radiance(x: f32) -> f32 {
     255.0 * (x/4.0).atan() / FRAC_PI_2
 }
 
-fn random_vector_in_hemisphere(vec: &Vector3<f32>) -> Vector3<f32> {
-    let u  = rand::random::<f32>();
-    let v  = rand::random::<f32>();
+fn random_vector_in_hemisphere(bn: &mut BlueNoiseGenerator, vec: &Vector3<f32>) -> Vector3<f32> {
+    let (u, v) = bn.get();
     let th = TWO_PI * u;
     let ph = (2.0 * v - 1.0).acos();
 
@@ -300,7 +303,7 @@ struct IntersectData {
     material: Material
 }
 
-fn trace_iterative(ray: Ray, is: &Vec<Shape>, thing: &BVH) -> Color<f32> {
+fn trace_iterative(bn: &mut BlueNoiseGenerator, ray: Ray, is: &Vec<Shape>, thing: &BVH) -> Color<f32> {
     let mut ray = ray;
     let mut frag_color = Color::new(1.0, 1.0, 1.0);
     for _ in 0..4 {
@@ -323,7 +326,7 @@ fn trace_iterative(ray: Ray, is: &Vec<Shape>, thing: &BVH) -> Color<f32> {
                     if will_reflect > 0.05 {
                         ray = Ray::new(
                             idata.point + 0.00001 * idata.normal,
-                            random_vector_in_hemisphere(&idata.normal)
+                            random_vector_in_hemisphere(bn, &idata.normal)
                         );
                     } else {
                         ray = Ray::new(
