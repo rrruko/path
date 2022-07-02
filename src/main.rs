@@ -70,7 +70,7 @@ fn make_objects() -> Vec<Prim> {
     let white = Material::Candy(Color::new(0.95, 0.95, 0.95));
 
     let light = Prim::PrimSphere(Sphere::new(
-        Point3::new(0.0, 0.0, -8.0),
+        Point3::new(2.0, -4.0, -8.0),
         2.0,
         bright_light,
     ));
@@ -88,39 +88,55 @@ fn make_objects() -> Vec<Prim> {
 
     for point in regular_polygon(5).iter() {
         let sphere = Prim::PrimSphere(Sphere::new(
-            Point3::new(3.0 * point.0, 3.0 * point.1, 4.0),
+            Point3::new(6.0 * point.1, 0.0, 6.0 * point.0),
             2.0,
-            mirror
+            dim_light
         ));
         prims.push(sphere);
     }
 
-    let mut triverts = vec![];
-    for point in regular_polygon(3).iter() {
-        triverts.push(Point3::new(point.0, point.1, 2.0));
-    }
-
-    let tri = Prim::PrimTri(
-        Tri::new(triverts[0], triverts[1], triverts[2], red)
+    let vy = Vector3::y();
+    let rotation = nalgebra::geometry::Rotation3::new(
+        vy * -1.5 * FRAC_PI_2
     );
-    prims.push(tri);
-
-    /*
-    let obj = tobj::load_obj("buddha.obj", true);
+    let offs = Vector3::new(0.0, 2.0, 0.0);
+    let scale = 20.0;
+    let obj = tobj::load_obj("bunny.obj", true);
     let (models, materials) = obj.unwrap();
     println!("# of models: {}", models.len());
     println!("# of materials: {}", materials.len());
     for model in models {
         let mesh = model.mesh;
-        let i = mesh.indices
-    }*/
+        for triverts in mesh.indices.chunks_exact(3) {
+            let a = rotation * Point3::new(
+                mesh.positions[(triverts[0] * 3) as usize],
+                -mesh.positions[(triverts[0] * 3 + 1) as usize],
+                mesh.positions[(triverts[0] * 3 + 2) as usize]
+            );
+            let b = rotation * Point3::new(
+                mesh.positions[(triverts[1] * 3) as usize],
+                -mesh.positions[(triverts[1] * 3 + 1) as usize],
+                mesh.positions[(triverts[1] * 3 + 2) as usize]
+            );
+            let c = rotation * Point3::new(
+                mesh.positions[(triverts[2] * 3) as usize],
+                -mesh.positions[(triverts[2] * 3 + 1) as usize],
+                mesh.positions[(triverts[2] * 3 + 2) as usize]
+            );
+            let tri = Prim::PrimTri(
+                // Order flipped to keep correct normal
+                Tri::new(scale * a + offs, scale * c + offs, scale * b + offs, white)
+            );
+            prims.push(tri);
+        }
+    }
 
     prims
 }
 
 #[allow(many_single_char_names)]
 fn make_image(width: usize, height: usize, out_vec: &mut [u8], objects: &mut Vec<Prim>) {
-    let camera = Point3::new(0.0, 0.0, -5.0);
+    let camera = Point3::new(0.0, -1.0, -6.0);
     let focal_distance = 7.0; // Focus is on the plane 7 units in front of the camera.
     let aperture_width = 0.5;
 
@@ -245,18 +261,18 @@ struct IntersectData {
 }
 
 fn nearest_intersect(a: Option<IntersectData>, b: Option<IntersectData>) -> Option<IntersectData> {
-  match (a, b) {
-    (None, None) => None,
-    (Some(aa), None) => Some(aa),
-    (None, Some(bb)) => Some(bb),
-    (Some(aa), Some(bb)) => {
-      if aa.dist > bb.dist {
-        Some(bb)
-      } else {
-        Some(aa)
-      }
+    match (a, b) {
+        (None, None) => None,
+        (Some(aa), None) => Some(aa),
+        (None, Some(bb)) => Some(bb),
+        (Some(aa), Some(bb)) => {
+            if aa.dist > bb.dist {
+                Some(bb)
+            } else {
+                Some(aa)
+            }
+        }
     }
-  }
 }
 
 fn closest_intersect(ray: &Ray, bvh: &BVH, is: &Vec<Prim>) -> Option<IntersectData> {
@@ -269,7 +285,7 @@ fn closest_intersect(ray: &Ray, bvh: &BVH, is: &Vec<Prim>) -> Option<IntersectDa
 fn trace_iterative(ray: Ray, is: &Vec<Prim>, bvh: &BVH) -> Color<f32> {
     let mut ray = ray;
     let mut frag_color = Color::new(1.0, 1.0, 1.0);
-    for _ in 0..8 {
+    for _ in 0..4 {
         let hit = closest_intersect(&ray, bvh, is);
         if let Some(idata) = hit {
             match idata.material {
